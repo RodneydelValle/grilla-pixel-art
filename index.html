@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grilla Pixel Art</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: panel de controles a la izquierda, mesa de trabajo a la derecha; en móvil se apilan */
+:root{
+  --bg:#e9ebef; --panel:#f7f8fa; --fg:#1d2230; --muted:#5d6577; --line:#cfd4dd;
+  --accent:#2f5bea; --accent-fg:#fff; --stage:#d6d9e0; --chk-a:#ffffff; --chk-b:#dfe2e8;
+  --f-display:"Silkscreen",ui-monospace,monospace;
+  --f-body:"IBM Plex Sans",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#14161c; --panel:#1b1e26; --fg:#e6e8ee; --muted:#9aa1b2; --line:#2c303b;
+  --accent:#6f8dff; --accent-fg:#0d1020; --stage:#0f1116; --chk-a:#2a2d36; --chk-b:#23262e; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--f-body);display:flex;flex-direction:column}
+header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:12px max(16px,env(safe-area-inset-right)) 10px max(16px,env(safe-area-inset-left));border-bottom:1px solid var(--line)}
+h1{font:400 20px var(--f-display);margin:0;letter-spacing:.02em}
+header p{margin:0;color:var(--muted);font-size:13px}
+main{flex:1;display:grid;grid-template-columns:300px 1fr;min-height:0}
+aside{background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:14px 16px 24px;display:flex;flex-direction:column;gap:18px}
+section h2{font:600 11px var(--f-body);text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0 0 8px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
+label.inline{flex-direction:row;align-items:center;gap:8px;color:var(--fg);font-size:13px}
+input[type=number],select{font:500 13px var(--f-mono);color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:5px 7px;width:100%;font-variant-numeric:tabular-nums}
+input[type=color]{width:100%;height:30px;border:1px solid var(--line);border-radius:4px;background:var(--bg);padding:2px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+button,.file{font:600 13px var(--f-body);border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:4px;padding:7px 10px;cursor:pointer;text-align:center}
+button:hover,.file:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);width:100%;padding:10px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.file input{display:none}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btns>*{flex:1}
+.info{font:12px var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.stagewrap{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.toolbar .info{margin-left:auto}
+#stage{flex:1;overflow:auto;background:var(--stage);display:grid;place-items:center;padding:24px;min-height:300px}
+#view{display:block;cursor:grab;image-rendering:pixelated;box-shadow:0 1px 8px rgba(0,0,0,.25);
+  background:repeating-conic-gradient(var(--chk-a) 0 25%,var(--chk-b) 0 50%) 0 0/16px 16px}
+#view.drag{cursor:grabbing}
+#drop{position:absolute;inset:0;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 18%,transparent);border:3px dashed var(--accent);font:400 18px var(--f-display);pointer-events:none}
+.hint{font-size:12px;color:var(--muted);margin:6px 0 0}
+@media (max-width:760px){
+  main{grid-template-columns:1fr;grid-template-rows:auto auto}
+  aside{border-right:0;border-bottom:1px solid var(--line);overflow:visible}
+  #stage{min-height:60vh}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Grilla Pixel Art</h1>
+  <p>Cargue una imagen, ajuste la cuadrícula encima y descárguela como PNG.</p>
+</header>
+<main>
+  <aside>
+    <section>
+      <h2>Imagen</h2>
+      <div class="btns">
+        <label class="file">Abrir imagen…<input id="file" type="file" accept="image/*"></label>
+      </div>
+      <p class="hint">También puede arrastrarla aquí o pegarla con Ctrl+V.</p>
+      <p class="info" id="imginfo"></p>
+    </section>
+
+    <section>
+      <h2>Celdas</h2>
+      <div class="row">
+        <label>Ancho (px)<input id="cw" type="number" min="0.5" step="0.5"></label>
+        <label>Alto (px)<input id="ch" type="number" min="0.5" step="0.5"></label>
+      </div>
+      <label class="inline" style="margin-top:8px"><input id="lock" type="checkbox" checked> Celdas cuadradas</label>
+      <div class="row" style="margin-top:8px">
+        <label>Columnas<input id="cols" type="number" min="1" step="1"></label>
+        <label>Filas<input id="rows" type="number" min="1" step="1"></label>
+      </div>
+      <p class="hint">Escriba las columnas o filas que quiere y el tamaño de celda se calcula solo.</p>
+    </section>
+
+    <section>
+      <h2>Posición</h2>
+      <div class="row">
+        <label>Desplazar X<input id="ox" type="number" step="0.5"></label>
+        <label>Desplazar Y<input id="oy" type="number" step="0.5"></label>
+      </div>
+      <p class="hint">Arrastre sobre la imagen para mover la grilla. Flechas: 1 px; Shift + flechas: 0,1 px.</p>
+      <div class="btns" style="margin-top:8px"><button id="reset">Volver a 0,0</button></div>
+    </section>
+
+    <section>
+      <h2>Líneas</h2>
+      <div class="row">
+        <label>Color<input id="color" type="color"></label>
+        <label>Grosor (px)<input id="thick" type="number" min="1" max="20" step="1"></label>
+      </div>
+      <label style="margin-top:8px">Opacidad <input id="alpha" type="range" min="0.05" max="1" step="0.05"></label>
+      <label class="inline" style="margin-top:10px"><input id="majorOn" type="checkbox"> Línea guía cada…</label>
+      <div class="row" style="margin-top:6px">
+        <label>Cada N celdas<input id="majorEvery" type="number" min="2" step="1"></label>
+        <label>Grosor guía<input id="majorThick" type="number" min="1" max="20" step="1"></label>
+      </div>
+      <label style="margin-top:8px">Color guía<input id="majorColor" type="color"></label>
+    </section>
+
+    <section>
+      <h2>Descargar</h2>
+      <label>Escala de la imagen descargada
+        <select id="scale"></select>
+      </label>
+      <p class="info" id="outinfo"></p>
+      <label class="inline" style="margin:6px 0 10px"><input id="onlyGrid" type="checkbox"> Solo la grilla (fondo transparente)</label>
+      <button class="primary" id="download">Descargar PNG con grilla</button>
+    </section>
+  </aside>
+
+  <div class="stagewrap">
+    <div class="toolbar">
+      <button id="zout" aria-label="Alejar">−</button>
+      <input id="zoom" type="range" min="0.25" max="40" step="0.25" style="width:160px" aria-label="Zoom">
+      <button id="zin" aria-label="Acercar">+</button>
+      <button id="fit">Ajustar a pantalla</button>
+      <span class="info" id="zinfo"></span>
+    </div>
+    <div id="stage"><canvas id="view"></canvas></div>
+    <div id="drop" hidden>Suelte la imagen</div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const st = {img:null,W:0,H:0,name:'imagen',cw:10,ch:10,lock:true,ox:0,oy:0,
+  color:'#000000',alpha:0.7,thick:1,majorOn:true,majorEvery:4,majorColor:'#e0245e',majorThick:2,
+  zoom:3,scale:4,onlyGrid:false};
+const view = $('view'), vctx = view.getContext('2d');
+const SCALES=[1,2,3,4,5,6,8,10,12,16,20,24,32];
+
+/* Imagen de ejemplo: un corazón de 16x16 ampliado a 10 px por pixel */
+function sample(){
+  const art=["................","................","...KKK....KKK...","..KRRRK..KRRRK..",".KRWWRRKKRRRRRK.",".KRWRRRRRRRRRRK.",".KRRRRRRRRRRRRK.",".KRRRRRRRRRRRRK.","..KRRRRRRRRRRK..","...KRRRRRRRRK...","....KRRRRRRK....",".....KRRRRK.....","......KRRK......",".......KK.......","................","................"];
+  const pal={K:'#1b1b2f',R:'#e43f5a',W:'#ffe3e8'}, c=document.createElement('canvas'), x=c.getContext('2d');
+  c.width=c.height=160;
+  art.forEach((r,j)=>[...r].forEach((p,i)=>{if(pal[p]){x.fillStyle=pal[p];x.fillRect(i*10,j*10,10,10)}}));
+  return c;
+}
+
+function setImage(img,name){
+  st.img=img; st.W=img.naturalWidth||img.width; st.H=img.naturalHeight||img.height;
+  st.name=(name||'imagen').replace(/\.[^.]+$/,'');
+  st.ox=0; st.oy=0;
+  const auto=SCALES.filter(s=>Math.max(st.W,st.H)*s<=4096);
+  st.scale=auto.reduce((b,s)=>Math.abs(Math.max(st.W,st.H)*s-1600)<Math.abs(Math.max(st.W,st.H)*b-1600)?s:b,auto[0]||1);
+  fit(); sync(); draw();
+}
+
+/* Dibuja imagen + grilla a una escala dada; se usa igual para pantalla y descarga */
+function render(ctx,s,withImage){
+  const W=st.W*s,H=st.H*s;
+  ctx.clearRect(0,0,W,H);
+  ctx.imageSmoothingEnabled=false;
+  if(withImage&&st.img) ctx.drawImage(st.img,0,0,W,H);
+  const lines=(cell,off,len,cb)=>{
+    const start=off-Math.ceil(off/cell)*cell;
+    for(let p=start,guard=0;p<=len+1e-6&&guard<100000;p+=cell,guard++){
+      if(p<-1e-6) continue;
+      cb(p,Math.round((p-off)/cell));
+    }
+  };
+  const pass=(major)=>{
+    const t=major?st.majorThick:st.thick;
+    ctx.globalAlpha=st.alpha; ctx.fillStyle=major?st.majorColor:st.color;
+    const isMajor=n=>st.majorOn&&((n%st.majorEvery)+st.majorEvery)%st.majorEvery===0;
+    lines(st.cw,st.ox,st.W,(p,n)=>{ if(isMajor(n)!==major) return;
+      const x=Math.round(p*s)-Math.floor(t/2); ctx.fillRect(Math.min(Math.max(x,0),W-t),0,t,H);});
+    lines(st.ch,st.oy,st.H,(p,n)=>{ if(isMajor(n)!==major) return;
+      const y=Math.round(p*s)-Math.floor(t/2); ctx.fillRect(0,Math.min(Math.max(y,0),H-t),W,t);});
+    ctx.globalAlpha=1;
+  };
+  pass(false); if(st.majorOn) pass(true);
+}
+
+function draw(){
+  if(!st.img) return;
+  const dpr=window.devicePixelRatio||1, z=st.zoom;
+  view.style.width=Math.round(st.W*z)+'px'; view.style.height=Math.round(st.H*z)+'px';
+  view.width=Math.round(st.W*z*dpr); view.height=Math.round(st.H*z*dpr);
+  render(vctx,z*dpr,true);
+  $('zinfo').textContent=Math.round(z*100)+' %';
+  const cols=st.W/st.cw, rows=st.H/st.ch;
+  $('imginfo').textContent=`${st.name} · ${st.W} × ${st.H} px`;
+  $('outinfo').textContent=`Salida: ${st.W*st.scale} × ${st.H*st.scale} px · ${fmt(cols)} × ${fmt(rows)} celdas`;
+}
+const fmt=n=>Number.isInteger(+n.toFixed(2))?String(Math.round(n)):n.toFixed(2).replace('.',',');
+
+function fit(){
+  const s=$('stage'), r=s.getBoundingClientRect();
+  const z=Math.min((r.width-48)/st.W,(r.height-48)/st.H);
+  st.zoom=Math.max(0.25,Math.min(40,Math.floor(z*4)/4||0.25));
+}
+
+/* Controles <-> estado */
+function sync(){
+  $('cw').value=+st.cw.toFixed(3); $('ch').value=+st.ch.toFixed(3); $('lock').checked=st.lock;
+  $('cols').value=Math.round(st.W/st.cw); $('rows').value=Math.round(st.H/st.ch);
+  $('ox').value=+st.ox.toFixed(2); $('oy').value=+st.oy.toFixed(2);
+  $('color').value=st.color; $('thick').value=st.thick; $('alpha').value=st.alpha;
+  $('majorOn').checked=st.majorOn; $('majorEvery').value=st.majorEvery; $('majorThick').value=st.majorThick; $('majorColor').value=st.majorColor;
+  $('scale').value=st.scale; $('zoom').value=st.zoom; $('onlyGrid').checked=st.onlyGrid;
+  ['majorEvery','majorThick','majorColor'].forEach(id=>$(id).disabled=!st.majorOn);
+}
+$('scale').innerHTML=SCALES.map(s=>`<option value="${s}">${s}×</option>`).join('');
+const num=(id,min)=>{const v=parseFloat($(id).value);return isFinite(v)?Math.max(min,v):null};
+const on=(id,ev,fn)=>$(id).addEventListener(ev,()=>{fn();sync();draw()});
+on('cw','change',()=>{const v=num('cw',0.5);if(v){st.cw=v;if(st.lock)st.ch=v}});
+on('ch','change',()=>{const v=num('ch',0.5);if(v){st.ch=v;if(st.lock)st.cw=v}});
+on('lock','change',()=>{st.lock=$('lock').checked;if(st.lock)st.ch=st.cw});
+on('cols','change',()=>{const v=num('cols',1);if(v){st.cw=st.W/v;if(st.lock)st.ch=st.cw}});
+on('rows','change',()=>{const v=num('rows',1);if(v){st.ch=st.H/v;if(st.lock)st.cw=st.ch}});
+on('ox','change',()=>{const v=parseFloat($('ox').value);if(isFinite(v))st.ox=v});
+on('oy','change',()=>{const v=parseFloat($('oy').value);if(isFinite(v))st.oy=v});
+on('reset','click',()=>{st.ox=0;st.oy=0});
+on('color','input',()=>st.color=$('color').value);
+on('majorColor','input',()=>st.majorColor=$('majorColor').value);
+on('thick','change',()=>st.thick=num('thick',1)||1);
+on('majorThick','change',()=>st.majorThick=num('majorThick',1)||2);
+on('majorEvery','change',()=>st.majorEvery=Math.round(num('majorEvery',2)||4));
+on('majorOn','change',()=>st.majorOn=$('majorOn').checked);
+on('alpha','input',()=>st.alpha=+$('alpha').value);
+on('scale','change',()=>st.scale=+$('scale').value);
+on('onlyGrid','change',()=>st.onlyGrid=$('onlyGrid').checked);
+on('zoom','input',()=>st.zoom=+$('zoom').value);
+on('zin','click',()=>st.zoom=Math.min(40,st.zoom*1.25));
+on('zout','click',()=>st.zoom=Math.max(0.25,st.zoom/1.25));
+on('fit','click',fit);
+
+/* Arrastrar para mover la grilla */
+let drag=null;
+view.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,ox:st.ox,oy:st.oy};view.setPointerCapture(e.pointerId);view.classList.add('drag')});
+view.addEventListener('pointermove',e=>{if(!drag)return;
+  st.ox=drag.ox+(e.clientX-drag.x)/st.zoom; st.oy=drag.oy+(e.clientY-drag.y)/st.zoom;
+  if(st.zoom>=2){st.ox=Math.round(st.ox*2)/2;st.oy=Math.round(st.oy*2)/2}
+  sync();draw()});
+const end=()=>{drag=null;view.classList.remove('drag')};
+view.addEventListener('pointerup',end); view.addEventListener('pointercancel',end);
+$('stage').addEventListener('wheel',e=>{if(!e.ctrlKey)return;e.preventDefault();
+  st.zoom=Math.max(0.25,Math.min(40,st.zoom*(e.deltaY<0?1.15:1/1.15)));sync();draw()},{passive:false});
+document.addEventListener('keydown',e=>{
+  if(e.target.matches('input,select'))return;
+  const d=e.shiftKey?0.1:1, k={ArrowLeft:[-d,0],ArrowRight:[d,0],ArrowUp:[0,-d],ArrowDown:[0,d]}[e.key];
+  if(!k)return; e.preventDefault(); st.ox=+(st.ox+k[0]).toFixed(2); st.oy=+(st.oy+k[1]).toFixed(2); sync(); draw();
+});
+
+/* Cargar imagen: archivo, arrastrar o pegar */
+function loadFile(f){
+  if(!f||!f.type.startsWith('image/'))return;
+  const url=URL.createObjectURL(f), img=new Image();
+  img.onload=()=>setImage(img,f.name); img.src=url;
+}
+$('file').addEventListener('change',e=>loadFile(e.target.files[0]));
+let dc=0;
+document.addEventListener('dragenter',e=>{e.preventDefault();dc++;$('drop').hidden=false});
+document.addEventListener('dragleave',()=>{if(--dc<=0){dc=0;$('drop').hidden=true}});
+document.addEventListener('dragover',e=>e.preventDefault());
+document.addEventListener('drop',e=>{e.preventDefault();dc=0;$('drop').hidden=true;loadFile(e.dataTransfer.files[0])});
+document.addEventListener('paste',e=>{const it=[...e.clipboardData.items].find(i=>i.type.startsWith('image/'));if(it)loadFile(it.getAsFile())});
+
+/* Descargar */
+$('download').addEventListener('click',()=>{
+  const s=st.scale, c=document.createElement('canvas');
+  c.width=st.W*s; c.height=st.H*s;
+  if(c.width*c.height>16e7){alert('La imagen de salida es demasiado grande. Baje la escala.');return}
+  render(c.getContext('2d'),s,!st.onlyGrid);
+  c.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);
+    a.download=`${st.name}_grilla_${s}x.png`;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000)},'image/png');
+});
+window.addEventListener('resize',()=>draw());
+
+setImage(sample(),'ejemplo-corazon');
+</script>
+</body>
+</html>
