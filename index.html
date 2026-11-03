@@ -75,6 +75,17 @@ button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(
     </section>
 
     <section>
+      <h2>Detectar cuadrados</h2>
+      <div class="btns" style="flex-direction:column">
+        <button id="detect">Detectar tamaño y posición</button>
+        <button id="align">Alinear posición (mismo tamaño)</button>
+      </div>
+      <label class="inline" style="margin-top:8px"><input id="showEdges" type="checkbox"> Ver bordes detectados</label>
+      <p class="hint">La grilla siempre usa un único tamaño de celda en toda la imagen. El detector busca el tamaño que más se repite y lo calza con los bordes.</p>
+      <p class="info" id="detinfo" aria-live="polite"></p>
+    </section>
+
+    <section>
       <h2>Celdas</h2>
       <div class="row">
         <label>Ancho (px)<input id="cw" type="number" min="0.5" step="0.5"></label>
@@ -157,7 +168,7 @@ function sample(){
 function setImage(img,name){
   st.img=img; st.W=img.naturalWidth||img.width; st.H=img.naturalHeight||img.height;
   st.name=(name||'imagen').replace(/\.[^.]+$/,'');
-  st.ox=0; st.oy=0;
+  st.ox=0; st.oy=0; $('detinfo').textContent='';
   const auto=SCALES.filter(s=>Math.max(st.W,st.H)*s<=4096);
   st.scale=auto.reduce((b,s)=>Math.abs(Math.max(st.W,st.H)*s-1600)<Math.abs(Math.max(st.W,st.H)*b-1600)?s:b,auto[0]||1);
   fit(); sync(); draw();
@@ -168,7 +179,7 @@ function render(ctx,s,withImage){
   const W=st.W*s,H=st.H*s;
   ctx.clearRect(0,0,W,H);
   ctx.imageSmoothingEnabled=false;
-  if(withImage&&st.img) ctx.drawImage(st.img,0,0,W,H);
+  if(withImage&&st.img) ctx.drawImage(withImage==='edges'?edgeCanvas():st.img,0,0,W,H);
   const lines=(cell,off,len,cb)=>{
     const start=off-Math.ceil(off/cell)*cell;
     for(let p=start,guard=0;p<=len+1e-6&&guard<100000;p+=cell,guard++){
@@ -194,7 +205,7 @@ function draw(){
   const dpr=window.devicePixelRatio||1, z=st.zoom;
   view.style.width=Math.round(st.W*z)+'px'; view.style.height=Math.round(st.H*z)+'px';
   view.width=Math.round(st.W*z*dpr); view.height=Math.round(st.H*z*dpr);
-  render(vctx,z*dpr,true);
+  render(vctx,z*dpr,st.showEdges?'edges':true);
   $('zinfo').textContent=Math.round(z*100)+' %';
   const cols=st.W/st.cw, rows=st.H/st.ch;
   $('imginfo').textContent=`${st.name} · ${st.W} × ${st.H} px`;
@@ -242,6 +253,91 @@ on('zoom','input',()=>st.zoom=+$('zoom').value);
 on('zin','click',()=>st.zoom=Math.min(40,st.zoom*1.25));
 on('zout','click',()=>st.zoom=Math.max(0.25,st.zoom/1.25));
 on('fit','click',fit);
+
+/* Detección de cuadrados: perfiles de bordes por columna y fila, y búsqueda del periodo que más se repite */
+let pix=null, edges=null;
+function pixels(){
+  if(pix&&pix.img===st.img) return pix.d;
+  const c=document.createElement('canvas'); c.width=st.W; c.height=st.H;
+  const x=c.getContext('2d'); x.drawImage(st.img,0,0);
+  pix={img:st.img,d:x.getImageData(0,0,st.W,st.H).data}; return pix.d;
+}
+const diff=(d,i,j)=>Math.abs(d[i]-d[j])+Math.abs(d[i+1]-d[j+1])+Math.abs(d[i+2]-d[j+2])+Math.abs(d[i+3]-d[j+3]);
+function profiles(){
+  const d=pixels(), W=st.W, H=st.H, ex=new Float64Array(W+1), ey=new Float64Array(H+1);
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const i=(y*W+x)*4;
+    if(x>0) ex[x]+=diff(d,i,i-4);
+    if(y>0) ey[y]+=diff(d,i,i-W*4);
+  }
+  return {ex,ey};
+}
+function edgeCanvas(){
+  if(edges&&edges.img===st.img) return edges.c;
+  const d=pixels(), W=st.W, H=st.H, c=document.createElement('canvas'); c.width=W; c.height=H;
+  const x=c.getContext('2d'), out=x.createImageData(W,H), o=out.data;
+  for(let y=0;y<H;y++) for(let xx=0;xx<W;xx++){
+    const i=(y*W+xx)*4;
+    const v=Math.max(xx>0?diff(d,i,i-4):0, y>0?diff(d,i,i-W*4):0);
+    const g=Math.min(255,v*1.5); o[i]=o[i+1]=o[i+2]=g; o[i+3]=255;
+  }
+  x.putImageData(out,0,0); edges={img:st.img,c}; return c;
+}
+// Mejor fase para un periodo P. Puntaje = borde capturado en fase + k·P por sobre el promedio:
+// un múltiplo (2P) pierde la mitad de los bordes y una fracción (P/2) suma posiciones vacías, así gana el periodo real
+function bestPhase(e,n,P,mean){
+  const stp=P<16?0.25:P<64?0.5:1, phs=[];
+  for(let ph=0;ph<P;ph+=stp) phs.push(ph);
+  phs.sort((a,b)=>(a%1>0)-(b%1>0)); // en empate gana la fase entera
+  let best={ph:0,s:-Infinity,r:0};
+  for(const ph of phs){
+    let s=0,c=0;
+    for(let pos=ph;pos<n;pos+=P){const r=Math.round(pos); if(r>=1&&r<=n-1){s+=e[r]-mean;c++}}
+    if(c>=2&&s>best.s) best={ph,s,r:(s/c+mean)/mean};
+  }
+  return best;
+}
+const meanOf=(e,n)=>{let s=0;for(let i=1;i<n;i++)s+=e[i];return s/Math.max(1,n-1)||1};
+function periods(n){const a=[];for(let P=2;P<=Math.min(512,n/2);P+=P<32?0.05:P<128?0.1:0.25)a.push(+P.toFixed(2));return a}
+// Entre los que calzan casi igual de bien, se prefiere el tamaño más cercano a un entero
+function choose(list){
+  const best=list.reduce((a,b)=>b.score>a.score?b:a,{score:-Infinity});
+  if(!(best.score>0)) return null;
+  const near=list.filter(c=>c.score>=best.score*0.99&&Math.abs(c.P-best.P)<=best.P*0.05);
+  const frac=P=>Math.abs(P-Math.round(P));
+  return near.reduce((a,b)=>frac(b.P)<frac(a.P)-1e-9?b:a);
+}
+function detect(sizeToo){
+  const msg=$('detinfo'); msg.textContent='Buscando…';
+  setTimeout(()=>{
+    const {ex,ey}=profiles(), W=st.W, H=st.H, mx=meanOf(ex,W), my=meanOf(ey,H);
+    let cx, cy;
+    if(!sizeToo){
+      cx={P:st.cw,...bestPhase(ex,W,st.cw,mx)}; cy={P:st.ch,...bestPhase(ey,H,st.ch,my)};
+    }else if(st.lock){
+      const list=periods(Math.max(W,H)).map(P=>{
+        const bx=P<=W/2?bestPhase(ex,W,P,mx):null, by=P<=H/2?bestPhase(ey,H,P,my):null;
+        return {P,bx,by,score:(bx?bx.s/mx:0)+(by?by.s/my:0)};
+      });
+      const c=choose(list); if(!c){msg.textContent='No encontré un patrón de cuadrados.';return}
+      cx={P:c.P,...(c.bx||bestPhase(ex,W,c.P,mx))}; cy={P:c.P,...(c.by||bestPhase(ey,H,c.P,my))};
+    }else{
+      const ax=choose(periods(W).map(P=>{const b=bestPhase(ex,W,P,mx);return {P,...b,score:b.s}}));
+      const ay=choose(periods(H).map(P=>{const b=bestPhase(ey,H,P,my);return {P,...b,score:b.s}}));
+      if(!ax||!ay){msg.textContent='No encontré un patrón de cuadrados.';return}
+      cx=ax; cy=ay;
+    }
+    const conf=(cx.r+cy.r)/2;
+    if(sizeToo&&conf<1.4){msg.textContent='No encontré un patrón claro. Ajuste el tamaño a mano y use “Alinear posición”.';return}
+    if(sizeToo){st.cw=cx.P; st.ch=cy.P}
+    st.ox=cx.ph; st.oy=cy.ph;
+    msg.textContent=`Celda ${fmt(st.cw)} × ${fmt(st.ch)} px · desplazamiento ${fmt(st.ox)}, ${fmt(st.oy)} · calce ${conf>=3?'alto':conf>=1.8?'medio':'bajo'}`;
+    sync(); draw();
+  },20);
+}
+$('detect').addEventListener('click',()=>detect(true));
+$('align').addEventListener('click',()=>detect(false));
+on('showEdges','change',()=>st.showEdges=$('showEdges').checked);
 
 /* Arrastrar para mover la grilla */
 let drag=null;
