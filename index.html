@@ -144,6 +144,7 @@ button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(
       <p class="info" id="outinfo"></p>
       <label class="inline" style="margin:6px 0 10px"><input id="onlyGrid" type="checkbox"> Solo la grilla (fondo transparente)</label>
       <button class="primary" id="download">Descargar PNG con grilla</button>
+      <button id="downloadNoGrid" style="width:100%;margin-top:6px">Descargar PNG sin grilla</button>
     </section>
   </aside>
 
@@ -457,6 +458,14 @@ $('download').addEventListener('click',()=>{
   if(c.width*c.height>16e7){alert('La imagen de salida es demasiado grande. Baje la escala.');return}
   render(c.getContext('2d'),s,!st.onlyGrid);
   saveCanvas(c,`${st.name}_grilla_${s}x.png`);
+});
+// Misma escala e imagen (pixelada si se aplicó), pero sin líneas
+$('downloadNoGrid').addEventListener('click',()=>{
+  const s=st.scale, c=document.createElement('canvas');
+  c.width=st.W*s; c.height=st.H*s;
+  if(c.width*c.height>16e7){alert('La imagen de salida es demasiado grande. Baje la escala.');return}
+  const x=c.getContext('2d'); x.imageSmoothingEnabled=false; x.drawImage(st.img,0,0,c.width,c.height);
+  saveCanvas(c,`${st.name}${st.orig?'_pixelart':''}_${s}x.png`);
 });
 window.addEventListener('resize',()=>draw());
 
