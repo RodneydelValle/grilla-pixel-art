@@ -35,6 +35,7 @@ input[type=color]{width:100%;height:30px;border:1px solid var(--line);border-rad
 input[type=range]{width:100%;accent-color:var(--accent)}
 button,.file{font:600 13px var(--f-body);border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:4px;padding:7px 10px;cursor:pointer;text-align:center}
 button:hover,.file:hover{border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed;border-color:var(--line)}
 button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);width:100%;padding:10px}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .file input{display:none}
@@ -83,6 +84,17 @@ button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(
       <label class="inline" style="margin-top:8px"><input id="showEdges" type="checkbox"> Ver bordes detectados</label>
       <p class="hint">La grilla siempre usa un único tamaño de celda en toda la imagen. El detector busca el tamaño que más se repite y lo calza con los bordes.</p>
       <p class="info" id="detinfo" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <h2>Pixelar</h2>
+      <label>Unir colores parecidos: <span id="mergeV">24</span><input id="merge" type="range" min="0" max="80" step="1" value="24"></label>
+      <p class="hint">Cada celda toma su color dominante, sin contar el borde difuso, así los colores quedan sólidos y los bordes nítidos. Si sube este valor, los tonos casi iguales se juntan en un solo color.</p>
+      <div class="btns" style="flex-direction:column">
+        <button id="pixelate">Pixelar con la grilla actual</button>
+        <div class="btns"><button id="undoPix" disabled>Volver al original</button><button id="dlSmall" disabled>Descargar 1 px por celda</button></div>
+      </div>
+      <p class="info" id="pixinfo" aria-live="polite"></p>
     </section>
 
     <section>
@@ -169,6 +181,7 @@ function setImage(img,name){
   st.img=img; st.W=img.naturalWidth||img.width; st.H=img.naturalHeight||img.height;
   st.name=(name||'imagen').replace(/\.[^.]+$/,'');
   st.ox=0; st.oy=0; $('detinfo').textContent='';
+  st.orig=null; pixelCells=null; $('pixinfo').textContent=''; $('undoPix').disabled=$('dlSmall').disabled=true;
   const auto=SCALES.filter(s=>Math.max(st.W,st.H)*s<=4096);
   st.scale=auto.reduce((b,s)=>Math.abs(Math.max(st.W,st.H)*s-1600)<Math.abs(Math.max(st.W,st.H)*b-1600)?s:b,auto[0]||1);
   fit(); sync(); draw();
@@ -370,15 +383,80 @@ document.addEventListener('dragover',e=>e.preventDefault());
 document.addEventListener('drop',e=>{e.preventDefault();dc=0;$('drop').hidden=true;loadFile(e.dataTransfer.files[0])});
 document.addEventListener('paste',e=>{const it=[...e.clipboardData.items].find(i=>i.type.startsWith('image/'));if(it)loadFile(it.getAsFile())});
 
+/* Pixelar: cada celda de la grilla toma su color dominante */
+let pixelCells=null;
+function readPixels(img,W,H){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const x=c.getContext('2d'); x.drawImage(img,0,0); return x.getImageData(0,0,W,H).data;
+}
+// Bordes de celda en pixeles enteros, incluyendo las celdas parciales de los extremos
+function bounds(off,cell,len){
+  const b=[0]; let p=off-Math.floor(off/cell)*cell; if(p<1e-6) p+=cell;
+  for(;p<len-1e-6;p+=cell){const r=Math.round(p); if(r>b[b.length-1]&&r<len) b.push(r)}
+  b.push(len); return b;
+}
+function pixelate(){
+  const src=st.orig||st.img, W=st.W, H=st.H, d=readPixels(src,W,H);
+  const xs=bounds(st.ox,st.cw,W), ys=bounds(st.oy,st.ch,H), nx=xs.length-1, ny=ys.length-1;
+  const cells=[];
+  for(let j=0;j<ny;j++) for(let i=0;i<nx;i++){
+    const x0=xs[i],x1=xs[i+1],y0=ys[j],y1=ys[j+1];
+    // se ignora el 20 % del borde de cada celda, donde el reescalado mezcla colores
+    const mx=Math.floor((x1-x0)*0.2), my=Math.floor((y1-y0)*0.2), hist=new Map();
+    for(let y=y0+my;y<y1-my;y++) for(let x=x0+mx;x<x1-mx;x++){
+      const k=(y*W+x)*4;
+      const key=d[k+3]<128?-1:((d[k]>>4)<<8)|((d[k+1]>>4)<<4)|(d[k+2]>>4);
+      let h=hist.get(key); if(!h){h=[0,0,0,0];hist.set(key,h)}
+      h[0]++; h[1]+=d[k]; h[2]+=d[k+1]; h[3]+=d[k+2];
+    }
+    let best=null,bk=-1;
+    for(const [k,h] of hist) if(!best||h[0]>best[0]){best=h;bk=k}
+    cells.push({x0,x1,y0,y1,c:!best||bk===-1?null:[best[1],best[2],best[3]].map(v=>Math.round(v/best[0]))});
+  }
+  // unir colores parecidos: los más frecuentes absorben a los cercanos
+  const tol=+$('merge').value, freq=new Map();
+  cells.forEach(c=>{if(c.c){const k=c.c.join();freq.set(k,(freq.get(k)||0)+1)}});
+  const pal=[], map=new Map();
+  [...freq.entries()].sort((a,b)=>b[1]-a[1]).forEach(([k])=>{
+    const u=k.split(',').map(Number);
+    let p=pal.find(p=>Math.hypot(p[0]-u[0],p[1]-u[1],p[2]-u[2])<=tol);
+    if(!p){p=u;pal.push(p)} map.set(k,p);
+  });
+  const out=document.createElement('canvas'); out.width=W; out.height=H;
+  const small=document.createElement('canvas'); small.width=nx; small.height=ny;
+  const o=out.getContext('2d'), s=small.getContext('2d');
+  cells.forEach((c,idx)=>{
+    if(!c.c) return;
+    o.fillStyle=s.fillStyle=`rgb(${map.get(c.c.join())})`;
+    o.fillRect(c.x0,c.y0,c.x1-c.x0,c.y1-c.y0);
+    s.fillRect(idx%nx,Math.floor(idx/nx),1,1);
+  });
+  if(!st.orig) st.orig=st.img;
+  st.img=out; pixelCells=small;
+  $('pixinfo').textContent=`${nx} × ${ny} celdas · ${pal.length} colores`;
+  $('undoPix').disabled=$('dlSmall').disabled=false;
+  draw();
+}
+$('pixelate').addEventListener('click',pixelate);
+$('merge').addEventListener('input',()=>$('mergeV').textContent=$('merge').value);
+$('undoPix').addEventListener('click',()=>{
+  if(st.orig){st.img=st.orig; st.orig=null}
+  pixelCells=null; $('pixinfo').textContent=''; $('undoPix').disabled=$('dlSmall').disabled=true; draw();
+});
+$('dlSmall').addEventListener('click',()=>{if(pixelCells) saveCanvas(pixelCells,`${st.name}_pixelart_1px.png`)});
+
 /* Descargar */
+function saveCanvas(c,filename){
+  c.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);
+    a.download=filename;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000)},'image/png');
+}
 $('download').addEventListener('click',()=>{
   const s=st.scale, c=document.createElement('canvas');
   c.width=st.W*s; c.height=st.H*s;
   if(c.width*c.height>16e7){alert('La imagen de salida es demasiado grande. Baje la escala.');return}
   render(c.getContext('2d'),s,!st.onlyGrid);
-  c.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);
-    a.download=`${st.name}_grilla_${s}x.png`;document.body.appendChild(a);a.click();a.remove();
-    setTimeout(()=>URL.revokeObjectURL(a.href),2000)},'image/png');
+  saveCanvas(c,`${st.name}_grilla_${s}x.png`);
 });
 window.addEventListener('resize',()=>draw());
 
